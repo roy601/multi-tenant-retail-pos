@@ -56,14 +56,22 @@ Mobile POS is a comprehensive, desktop-ready Point of Sale (POS) application bui
    ```
 2. Install dependencies:
    ```bash
+   pnpm install
+   ```
+   Or with npm:
+   ```bash
    npm install
    ```
 3. Set up environment variables:
-   Create a `.env.local` file in the root directory and add your Supabase credentials:
-   ```env
-   NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+   ```bash
+   cp .env.example .env.local
    ```
+   Then edit `.env.local` and add your credentials:
+   - **Supabase**: Get your URL and Anon Key from [Supabase Dashboard](https://supabase.com/)
+   - **Database**: Configure your MySQL connection details
+   - **Optional**: Add SMTP credentials if you want email invoice functionality
+
+   See [SECURITY.md](./SECURITY.md) for security best practices and [.env.example](./.env.example) for all available options.
 
 ### Running the App
 - **Development Mode**:
@@ -86,4 +94,10 @@ Mobile POS is a comprehensive, desktop-ready Point of Sale (POS) application bui
   ```
 
 ## 📜 License
-This project is private and for internal use only.
+This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
+
+## 🔐 Privacy & Security
+This project is designed with security and privacy in mind. All sensitive data (API keys, database passwords, etc.) should be stored in environment variables and never committed to the repository. See [SECURITY.md](./SECURITY.md) for detailed security guidelines.
+
+## 🤝 Contributing
+We welcome contributions! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines on how to contribute to this project.
