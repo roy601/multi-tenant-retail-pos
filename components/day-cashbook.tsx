@@ -56,7 +56,45 @@ export function DayCashbook() {
   // isAuthorized now reflects owner role
   useEffect(() => {
     setIsAuthorized(isAdmin());
-  }, []);
+  }, [isAdmin]);
+
+  // Fetch persisted manual BFC on load
+  useEffect(() => {
+    if (organizationId) {
+      fetchPersistedBfc();
+    }
+  }, [organizationId]);
+
+  const fetchPersistedBfc = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("day_cashbook_entries")
+        .select("dr_amount, cr_amount, particular")
+        .eq("organization_id", organizationId)
+        .eq("source_type", "manual_bfc")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error && error.code !== "PGRST116") {
+        console.error("Error fetching manual BFC:", error);
+        return;
+      }
+
+      if (data) {
+        const val = (data.dr_amount || 0) - (data.cr_amount || 0);
+        setManualBfcValue(val);
+        setManualBfcActive(true);
+        setManualBfcInput(val.toString());
+      } else {
+        setManualBfcValue(null);
+        setManualBfcActive(false);
+        setManualBfcInput("");
+      }
+    } catch (err) {
+      console.error("fetchPersistedBfc error:", err);
+    }
+  };
 
   useEffect(() => {
     if (dateFilterEnabled) {
@@ -78,7 +116,7 @@ export function DayCashbook() {
         loadCashbookData("2000-01-01", today);
       }
     }
-  }, [startDate, endDate, dateFilterEnabled]);
+  }, [startDate, endDate, dateFilterEnabled, manualBfcActive, manualBfcValue]);
 
   // Get the date range description
   const getDateRangeDescription = () => {
@@ -769,10 +807,12 @@ export function DayCashbook() {
           )}
           <Button
             variant="outline"
-            onClick={() =>
-              dateFilterEnabled &&
-              loadCashbookData(startDate || "2000-01-01", endDate || today)
-            }
+            onClick={() => {
+              if (dateFilterEnabled) {
+                fetchPersistedBfc();
+                loadCashbookData(startDate || "2000-01-01", endDate || today);
+              }
+            }}
             disabled={loading}
           >
             <RefreshCw
@@ -888,19 +928,59 @@ export function DayCashbook() {
                 />
               </div>
               <Button
-                onClick={() => {
+                onClick={async () => {
                   const val = parseFloat(manualBfcInput);
                   if (!isFinite(val)) {
                     toast({ title: "Invalid", description: "Enter a valid number.", variant: "destructive" });
                     return;
                   }
-                  setManualBfcValue(val);
-                  setManualBfcActive(true);
-                  // Rebuild cashbook with manual BFC
-                  const s = startDate || "2000-01-01";
-                  const e = endDate || today;
-                  loadCashbookData(s, e);
-                  toast({ title: "BFC Set", description: `Manual BFC ৳${val.toFixed(2)} applied.` });
+
+                  try {
+                    // Save to DB
+                    const { error } = await supabase
+                      .from("day_cashbook_entries")
+                      .upsert({
+                        organization_id: organizationId,
+                        date: today,
+                        particular: "Manual BFC Override",
+                        dr_amount: val >= 0 ? val : 0,
+                        cr_amount: val < 0 ? Math.abs(val) : 0,
+                        source_type: "manual_bfc",
+                        is_auto_generated: false
+                      }, { onConflict: "organization_id,source_type" }); // We need to check if there's a unique constraint or just delete and insert
+
+                    // Actually, the table doesn't have a unique constraint on (organization_id, source_type) in the schema I saw.
+                    // Let's delete existing manual_bfc entries for this org first to be sure.
+                    await supabase
+                      .from("day_cashbook_entries")
+                      .delete()
+                      .eq("organization_id", organizationId)
+                      .eq("source_type", "manual_bfc");
+
+                    const { error: insertError } = await supabase
+                      .from("day_cashbook_entries")
+                      .insert({
+                        organization_id: organizationId,
+                        date: today,
+                        particular: "Manual BFC Override",
+                        dr_amount: val >= 0 ? val : 0,
+                        cr_amount: val < 0 ? Math.abs(val) : 0,
+                        source_type: "manual_bfc",
+                        is_auto_generated: false
+                      });
+
+                    if (insertError) throw insertError;
+
+                    setManualBfcValue(val);
+                    setManualBfcActive(true);
+                    // Rebuild cashbook with manual BFC
+                    const s = startDate || "2000-01-01";
+                    const e = endDate || today;
+                    loadCashbookData(s, e);
+                    toast({ title: "BFC Set", description: `Manual BFC ৳${val.toFixed(2)} applied and saved.` });
+                  } catch (err: any) {
+                    toast({ title: "Error", description: err.message || "Failed to save BFC", variant: "destructive" });
+                  }
                 }}
                 className="bg-blue-600 hover:bg-blue-700"
               >
@@ -909,14 +989,26 @@ export function DayCashbook() {
               {manualBfcActive && (
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    setManualBfcValue(null);
-                    setManualBfcActive(false);
-                    setManualBfcInput("");
-                    const s = startDate || "2000-01-01";
-                    const e = endDate || today;
-                    loadCashbookData(s, e);
-                    toast({ title: "BFC Cleared", description: "Auto-calculated BFC restored." });
+                  onClick={async () => {
+                    try {
+                      const { error } = await supabase
+                        .from("day_cashbook_entries")
+                        .delete()
+                        .eq("organization_id", organizationId)
+                        .eq("source_type", "manual_bfc");
+
+                      if (error) throw error;
+
+                      setManualBfcValue(null);
+                      setManualBfcActive(false);
+                      setManualBfcInput("");
+                      const s = startDate || "2000-01-01";
+                      const e = endDate || today;
+                      loadCashbookData(s, e);
+                      toast({ title: "BFC Cleared", description: "Auto-calculated BFC restored." });
+                    } catch (err: any) {
+                      toast({ title: "Error", description: err.message || "Failed to clear BFC", variant: "destructive" });
+                    }
                   }}
                 >
                   Clear Override

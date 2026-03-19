@@ -25,6 +25,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { POSCalculator } from "@/components/pos-calculator";
 import { CustomerSearch } from "@/components/customer-search";
 import { ProductScanner } from "@/components/product-scanner";
@@ -129,6 +136,8 @@ export function POSClient() {
   const [showCalculator, setShowCalculator] = useState(false);
   const [showCustomerSearch, setShowCustomerSearch] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [showHeldSales, setShowHeldSales] = useState(false);
+  const [heldSales, setHeldSales] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   // Sample bank accounts
@@ -292,7 +301,7 @@ export function POSClient() {
       // If RPC found the product successfully, return it
       if (rpcResult?.success) return rpcResult;
 
-      // ── Fallback 1: query inventory directly ──────────────────────────────
+      // â”€â”€ Fallback 1: query inventory directly â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const { data: invData, error: invError } = await supabase
         .from("inventory")
         .select(
@@ -317,7 +326,7 @@ export function POSClient() {
         };
       }
 
-      // ── Fallback 2: query color_variants + purchases directly ─────────────
+      // â”€â”€ Fallback 2: query color_variants + purchases directly â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const { data: cvData, error: cvError } = await supabase
         .from("color_variants")
         .select(
@@ -331,12 +340,12 @@ export function POSClient() {
 
       if (cvError) {
         console.error("cvError fallback:", cvError);
-        return { 
-          success: false, 
+        return {
+          success: false,
           message: `Lookup Error: ${cvError.message || cvError.details || 'Unknown DB error'}`
         };
-      } 
-      
+      }
+
       if (cvData) {
         const purchase = Array.isArray(cvData.purchases)
           ? cvData.purchases[0]
@@ -403,11 +412,11 @@ export function POSClient() {
       v === null || v === undefined
         ? ""
         : String(v)
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#39;");
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
 
     const money = (n: any) => {
       const num = Number(n || 0);
@@ -452,27 +461,20 @@ export function POSClient() {
             const qty = Number(it.quantity || 0);
             const unit = money(it.unit_price);
             const total = money(it.total_price);
-            const itemCell = `<div style="line-height:1.05;">
+
+            const itemCell = `
               <div style="font-weight:600;">${product}</div>
-              ${
-                imeiOrCode
-                  ? `<div style="font-size:11px;color:#333;margin-top:4px;">${imeiOrCode}</div>`
-                  : ""
-              }
-            </div>`;
+              ${imeiOrCode ? `<div style="font-size:12px;color:#333;margin-top:2px;">${imeiOrCode}</div>` : ""}
+              ${color ? `<div style="font-size:12px;color:#333;margin-top:2px;">${color}</div>` : ""}
+            `;
+
             return `
-            <tr>
-              <td style="width:6%;padding:8px;border-bottom:1px solid #999;">${
-                idx + 1
-              }</td>
-              <td style="width:56%;padding:8px;border-bottom:1px solid #999;">${itemCell}${
-              color
-                ? `<div style="font-size:11px;color:#333;margin-top:4px;">${color}</div>`
-                : ""
-            }</td>
-              <td style="width:8%;padding:8px;border-bottom:1px solid #999;text-align:center">${qty}</td>
-              <td style="width:10%;padding:8px;border-bottom:1px solid #999;text-align:right">${unit}</td>
-              <td style="width:20%;padding:8px;border-bottom:1px solid #999;text-align:right">${total}</td>
+            <tr class="item-row">
+              <td class="row-sl">${idx + 1}</td>
+              <td class="row-desc">${itemCell}</td>
+              <td class="row-qty">${qty}</td>
+              <td class="row-price">${unit}</td>
+              <td class="row-amt">${total}</td>
             </tr>`;
           })
           .join("") ||
@@ -480,10 +482,9 @@ export function POSClient() {
 
       // Company details
       const companyName = esc(organization?.name || "Star Power");
-      const companyAddressLines = [
-        esc(organization?.address || "Shop # 507/B (5th Floor), Sector-7, Road # 03, North Tower, Uttara, Dhaka-1230"),
-        esc(organization?.phone ? `Mobile: ${organization.phone}` : "Mobile: 01727678944, 01678077128"),
-      ];
+
+      const phoneRaw = organization?.phone ? organization.phone : "01727-678944, 01678-077128";
+      const addressRaw = organization?.address || "Shop # 507/B (5th Floor), Sector-7, Road # 03, North Tower, Uttara, Dhaka-1230";
 
       // totals
       const subtotal = sale?.subtotal ?? sale?.sub_total ?? 0;
@@ -498,143 +499,167 @@ export function POSClient() {
         sale?.due_amount ??
         sale?.remaining_due ??
         Math.max(0, grandTotal - received);
-      const change = sale?.change_amount ?? sale?.change ?? 0;
-
-      // Footer
-      const footerBanglaLine = esc(
-        "যদি কোনো সমস্যা হয়, অনুগ্রহ করে সার্ভিস কেন্দ্রে যোগাযোগ করুন।"
-      );
-      const footerContactNote = esc(
-        "If you find any issue in this invoice, contact: Cell: 01678-077128"
-      );
-
-      const watermarkText = esc("TECNO");
 
       const html = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
-<title>${esc(inv)}</title>
+<title>${esc(inv)} - Receipt</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; margin: 12px; color:#111; background:#fff; }
-  .page { width: 100%; max-width: 800px; margin: 0 auto; padding: 10px; box-sizing: border-box; }
+  body { font-family: "Arial", sans-serif; margin: 0; padding: 0; color:#111; background:#fff; }
+  .page { width: 100%; max-width: 800px; margin: 0 auto; padding: 20px; box-sizing: border-box; }
+  
+  /* Top Header */
+  .company-name { font-weight: bold; font-size: 32px; color: #1e40af; letter-spacing: 1px; margin-bottom: 4px; }
+  .company-address { font-size: 14px; color: #1e40af; margin-bottom: 2px; }
+  .company-mobile { font-size: 14px; color: #1e40af; margin-bottom: 15px; }
+  
+  /* Thick Blue Line */
+  .divider { border-top: 2px solid #1e40af; border-bottom: 1px solid #1e40af; height: 3px; margin-bottom: 20px; }
 
-  .header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:8px; }
-  .company { font-weight:700; font-size:18px; }
-  .company small { display:block; font-weight:400; font-size:12px; margin-top:6px; color:#222; }
-  .invoice-box { border:1px solid #000; padding:8px 10px; text-align:left; width:230px; }
-  .invoice-box .title { font-weight:700; font-size:12px; margin-bottom:6px; }
-  .invoice-box .row { display:flex; justify-content:space-between; font-size:12px; margin:4px 0; }
+  /* Middle Section */
+  .top-section { display: flex; justify-content: space-between; margin-bottom: 20px; gap: 20px; }
+  
+  .customer-box { flex: 1; border: 1px solid #1e40af; border-collapse: collapse; width: 100%; }
+  .customer-box td { border: 1px solid #1e40af; padding: 6px 10px; font-size: 14px; color: #1e40af; height: 32px; }
+  .customer-box td.label { width: 140px; }
+  .customer-box td.value { color: #000; font-weight: bold; }
 
-  .customer-block { display:flex; gap:12px; margin-bottom:8px; }
-  .cust-left { flex:1; border:1px solid #000; padding:8px; box-sizing:border-box; }
-  .cust-row { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
-  .cust-label { min-width:90px; font-weight:700; font-size:13px; }
-  .cust-value { flex:1; font-size:13px; }
+  .invoice-right { text-align: right; width: 250px; display: flex; align-items: flex-end; justify-content: flex-end;}
+  .invoice-title { font-size: 24px; font-weight: bold; color: #1e40af; margin-bottom: 4px; text-transform: uppercase; margin-right: 12px; line-height: 1;}
+  
+  .invoice-box { border: 1px solid #1e40af; border-collapse: collapse; width: 160px; }
+  .invoice-box td { border: 1px solid #1e40af; padding: 4px 10px; font-size: 14px; color: #1e40af; height: 28px; text-align: center; }
+  .invoice-box td.label { width: 80px; text-align: left;}
+  .invoice-box td.value { color: #000; font-weight: bold; font-size: 16px; }
 
-  table.items { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
-  table.items th, table.items td { border-bottom:1px solid #999; padding:8px; vertical-align:top; }
-  table.items th { background:#f5f5f5; font-weight:700; font-size:13px; text-align:left; }
-  table.items td { font-size:13px; color:#111; }
+  /* Main Table */
+  table.items { width:100%; border-collapse:collapse; margin-top:10px; font-size:14px; border: 1px solid #1e40af; }
+  table.items th, table.items td { border: 1px solid #1e40af; padding:8px 10px; vertical-align:top; }
+  table.items th { color: #1e40af; font-weight:bold; text-align:center; height: 40px; vertical-align: middle; }
+  
+  .row-sl { text-align: center; width: 5%; border-right: 1px solid #1e40af;}
+  .row-desc { width: 50%; border-right: 1px solid #1e40af;}
+  .row-qty { text-align: center; width: 10%; border-right: 1px solid #1e40af;}
+  .row-price { text-align: center; width: 15%; border-right: 1px solid #1e40af;}
+  .row-amt { text-align: center; width: 20%; }
 
-  .totals-box { border:1px solid #000; width:260px; padding:8px; box-sizing:border-box; float:right; margin-top:12px; }
-  .totals-box .line { display:flex; justify-content:space-between; padding:6px 0; font-size:13px; }
-  .totals-box .bold { font-weight:700; font-size:14px; }
+  /* Ensure rows don't have bottom borders inside the list */
+  table.items tr.item-row td { height: auto; padding: 10px; border-bottom: none !important; border-top: none !important;}
+  table.items tr.empty-row td { height: 100%; min-height: 250px; padding: 0; border-bottom: 1px solid #1e40af; border-top: none !important;}
 
-  .watermark { position: fixed; left: 50%; top: 45%; transform: translate(-50%,-50%) rotate(-20deg); opacity:0.08; font-size:120px; font-weight:900; color:#000; pointer-events:none; z-index:0; letter-spacing:8px; }
+  /* Totals styling */
+  .totals-wrapper { display: flex; border: 1px solid #1e40af; border-top: none;}
+  .totals-left { flex: 1; border-right: 1px solid #1e40af; }
+  .totals-right { width: 35%; display: flex; flex-direction: column;}
+  
+  .total-row { display: flex; border-bottom: 1px solid #1e40af; }
+  .total-row:last-child { border-bottom: none; }
+  .total-label { flex: 1; padding: 8px 10px; text-align: right; color: #1e40af; font-weight: bold; font-size: 14px; border-right: 1px solid #1e40af; }
+  .total-value { width: 120px; padding: 8px 10px; text-align: right; font-weight: bold; color: #000; }
 
-  .signature { margin-top:110px; display:flex; justify-content:flex-end; align-items:center; gap:8px; }
-  .sig-box { width:180px; text-align:center; border-top:1px solid #000; padding-top:6px; font-size:12px; }
-
-  footer { margin-top:22px; font-size:11px; color:#333; text-align:center; }
+  /* Footer */
+  .footer { margin-top: 30px; font-size: 13px; color: #1e40af; clear: both; display: flex; justify-content: space-between; align-items: flex-end;}
+  .footer-text { max-width: 60%; line-height: 1.5; font-weight: 500;}
+  .signature-box { text-align: center; border-top: 1px solid #1e40af; padding-top: 5px; width: 180px; color: #1e40af; font-size: 14px;}
 
   @media print {
     body { margin:0; }
-    .page { padding:6px; }
-    .watermark { opacity:0.06; }
+    .page { padding: 10px; max-width: 100%;}
     button { display:none; }
   }
 </style>
 </head>
 <body>
   <div class="page">
-    <div class="watermark">${watermarkText}</div>
+    <div class="company-name">${companyName}</div>
+    <div class="company-address">${esc(addressRaw)}</div>
+    <div class="company-mobile">Mobile: ${esc(phoneRaw)}</div>
+    
+    <div class="divider"></div>
 
-    <div class="header" role="banner">
-      <div>
-        <div class="company">${companyName}</div>
-        <small class="company-address">
-          ${companyAddressLines.map((l) => `<div>${esc(l)}</div>`).join("")}
-        </small>
+    <div class="top-section">
+      <div style="flex: 1;">
+        <table class="customer-box">
+          <tr>
+            <td class="label">Name</td>
+            <td class="value">${esc(cust?.customer_name || cust?.name || "")}</td>
+          </tr>
+          <tr>
+            <td class="label">Address/ Contract Number</td>
+            <td class="value">
+              ${esc(cust?.customer_address || cust?.address || cust?.contract_number || "")} 
+              ${cust?.customer_phone ? esc(cust.customer_phone) : ""}
+            </td>
+          </tr>
+        </table>
       </div>
-
-      <div class="invoice-box" role="region" aria-label="Invoice info">
-        <div style="text-align:right;font-size:14px;font-weight:800">INVOICE</div>
-        <div class="row"><div>IEMI no:</div><div>${esc(inv)}</div></div>
-        <div class="row"><div>Invoice Date:</div><div>${esc(
-          dateStr
-        )}</div></div>
-      </div>
-    </div>
-
-    <div class="customer-block" role="group" aria-label="Customer info">
-      <div class="cust-left">
-        <div style="display:flex;align-items:center; justify-content:space-between;">
-          <div style="font-weight:700;">Name</div>
-          <div style="font-weight:600;">${esc(
-            cust?.customer_name || cust?.name || ""
-          )}</div>
-        </div>
-        <div style="border-top:1px solid #ddd; margin-top:8px; padding-top:8px;">
-          <div style="font-weight:700; margin-bottom:4px;">Address / Contract Number</div>
-          <div style="font-size:13px;">${esc(
-            cust?.customer_address ||
-              cust?.address ||
-              cust?.contract_number ||
-              ""
-          )} ${
-        cust?.customer_phone ? " - " + esc(cust.customer_phone) : ""
-      }</div>
-        </div>
+      <div class="invoice-right">
+        <div class="invoice-title">INVOICE</div>
+        <table class="invoice-box">
+          <tr>
+            <td class="label">Invoice No</td>
+            <td class="value">${esc(inv)}</td>
+          </tr>
+          <tr>
+            <td class="label">Invoice Date</td>
+            <td class="value">${esc(dateStr)}</td>
+          </tr>
+        </table>
       </div>
     </div>
 
-    <table class="items" role="table" aria-label="Items">
+    <table class="items" role="table">
       <thead>
         <tr>
-          <th style="width:6%;">SL #</th>
-          <th style="width:62%;">Item/Model/Color</th>
-          <th style="width:8%; text-align:center">Qty</th>
-          <th style="width:12%; text-align:right">Unit</th>
-          <th style="width:12%; text-align:right">Amount</th>
+          <th style="width:5%">SL</th>
+          <th style="width:50%">Item/Model/Color</th>
+          <th style="width:10%">Qty</th>
+          <th style="width:15%">Price</th>
+          <th style="width:20%">Amount</th>
         </tr>
       </thead>
       <tbody>
         ${rows}
+        <tr class="empty-row" style="height: 250px;">
+          <td class="row-sl"></td>
+          <td class="row-desc"></td>
+          <td class="row-qty"></td>
+          <td class="row-price"></td>
+          <td class="row-amt"></td>
+        </tr>
       </tbody>
     </table>
 
-    <div class="totals-box" role="complementary" aria-label="Totals">
-      <div class="line"><div>Total</div><div>${money(subtotal)}</div></div>
-      <div class="line"><div>Net Receivables</div><div>${money(
-        grandTotal
-      )}</div></div>
-      <div class="line"><div>Received</div><div>${money(received)}</div></div>
-      <div class="line"><div>Dues</div><div>${money(dues)}</div></div>
+    <div class="totals-wrapper">
+      <div class="totals-left"></div>
+      <div class="totals-right">
+        <div class="total-row">
+          <div class="total-label">Total:</div>
+          <div class="total-value">${money(grandTotal)}</div>
+        </div>
+        <div class="total-row">
+          <div class="total-label">Received:</div>
+          <div class="total-value">${money(received)}</div>
+        </div>
+        <div class="total-row">
+          <div class="total-label">Dues</div>
+          <div class="total-value">${money(dues)}</div>
+        </div>
+      </div>
     </div>
 
-    <div style="clear:both"></div>
-
-    <div class="signature">
-      <div style="width:260px;"></div>
-      <div class="sig-box">Authorized Signature</div>
+    <div class="footer">
+      <div class="footer-text">
+       বিঃদ্রঃ কোন সমস্যা হলে অবশ্যই কোম্পানির সার্ভিস সেন্টারে যেতে হবে।<br>
+        বিক্রিত মাল ফেরত বা বদলানো হইবে না।<br><br>
+        If you find any issue in this invoice, Contact Cell: ${esc(phoneRaw)}
+      </div>
+      <div class="signature-box">
+        Authorised Signature
+      </div>
     </div>
-
-    <footer>
-      <div>${footerBanglaLine}</div>
-      <div style="margin-top:6px;">${footerContactNote}</div>
-    </footer>
   </div>
 
   <script>
@@ -785,12 +810,12 @@ export function POSClient() {
             throw new Error(`Product not found with barcode: ${item.barcode} ${variantError?.message ? `(${variantError.message})` : ''}`);
           }
 
-          const purchase = Array.isArray(variantData.purchases) 
-            ? variantData.purchases[0] 
+          const purchase = Array.isArray(variantData.purchases)
+            ? variantData.purchases[0]
             : (variantData.purchases as any);
 
           if (!purchase) {
-             throw new Error(`Product not found with barcode: ${item.barcode}`);
+            throw new Error(`Product not found with barcode: ${item.barcode}`);
           }
 
           productInfo = {
@@ -915,7 +940,49 @@ export function POSClient() {
     }
   };
 
-  // ✅ UPDATED: No customer check, no sale start
+  /**
+   * Specifically for HOLDING a sale: saves item to sold_products 
+   * WITHOUT updating inventory/stock.
+   */
+  const saveHeldItem = async (item: CartItem, saleId: number) => {
+    try {
+      // Convert barcode to numeric for sold_products table
+      let barcodeNumeric = null;
+      try {
+        if (item.barcode) {
+          barcodeNumeric = parseFloat(item.barcode);
+          if (isNaN(barcodeNumeric)) barcodeNumeric = null;
+        }
+      } catch (e) {
+        barcodeNumeric = null;
+      }
+
+      const { error: insertError } = await supabase
+        .from("sold_products")
+        .insert({
+          organization_id: organizationId,
+          sales_id: saleId,
+          barcode: barcodeNumeric,
+          product_name: item.name,
+          model_number: item.model || null,
+          color: item.color || null,
+          quantity: item.quantity,
+          unit_price: item.price,
+          discount_percentage: 0,
+          discount_amount: item.discount,
+          total_price: item.quantity * item.price - item.discount,
+          cost_price: item.cost_price || null,
+        });
+
+      if (insertError) throw insertError;
+      return true;
+    } catch (error: any) {
+      console.error("saveHeldItem error:", error);
+      throw error;
+    }
+  };
+
+  // âœ… UPDATED: No customer check, no sale start
   const addToCart = async () => {
     if (!productForm.name || productForm.price <= 0) {
       toast({
@@ -1026,7 +1093,7 @@ export function POSClient() {
     });
   };
 
-  // ✅ UPDATED: Check customer and start sale at completion
+  // âœ… UPDATED: Check customer and start sale at completion
   const completeSale = async () => {
     // Require customer at completion
     if (!customer) {
@@ -1227,8 +1294,11 @@ export function POSClient() {
 
       // Auto-send invoice to customer email
       if (activeSaleId) {
+        // ALWAYS auto-print the invoice immediately
+        openPrintableReceipt(activeSaleId, { autoPrint: true });
+
         if (customer?.email) {
-          // fire-and-forget — don't block the UI
+          // fire-and-forget â€” don't block the UI
           fetch("/api/send-invoice", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1285,7 +1355,7 @@ export function POSClient() {
         } else {
           toast({
             title: "No Email on File",
-            description: "Invoice not emailed — customer has no email address.",
+            description: "Invoice not emailed â€” customer has no email address.",
             variant: "default",
           });
         }
@@ -1348,9 +1418,11 @@ export function POSClient() {
     }
 
     // Start sale if not started
+    let activeSaleId = currentSaleId;
     if (!saleStarted) {
       try {
-        await startSaleForCustomer(customer as Required<Customer>);
+        const { saleId } = await startSaleForCustomer(customer as Required<Customer>);
+        activeSaleId = saleId;
       } catch (e: any) {
         toast({
           title: "Couldn't start sale",
@@ -1361,7 +1433,19 @@ export function POSClient() {
       }
     }
 
+    if (!activeSaleId) return;
+
+    setIsLoading(true);
     try {
+      // 1. Delete existing sold products for this sale to avoid duplicates
+      await supabase.from("sold_products").delete().eq("sales_id", activeSaleId);
+
+      // 2. Persist all current cart items (WITHOUT inventory update)
+      for (const item of cartItems) {
+        await saveHeldItem(item, activeSaleId);
+      }
+
+      // 3. Update sale status to 'held'
       const { error } = await supabase
         .from("sales")
         .update({
@@ -1372,29 +1456,156 @@ export function POSClient() {
           total_amount: total,
           status: "held",
         })
-        .eq("id", currentSaleId);
+        .eq("id", activeSaleId);
+
       if (error) throw error;
-      toast({ title: "Sale Held", description: "Sale held successfully!" });
+
+      toast({ title: "Sale Held", description: "Sale items saved. You can resume this sale later." });
       await newSale();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error holding sale:", error);
       toast({
         title: "Error",
-        description: "Failed to hold sale",
+        description: "Failed to hold sale: " + (error.message || "Unknown error"),
         variant: "destructive",
       });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchHeldSales = async () => {
+    if (!organizationId) return;
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("sales")
+        .select(`
+          *,
+          sale_customers (*)
+        `)
+        .eq("organization_id", organizationId)
+        .eq("status", "held")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+      setHeldSales(data || []);
+      setShowHeldSales(true);
+    } catch (error: any) {
+      console.error("Error fetching held sales:", error);
+      toast({ title: "Error", description: "Failed to fetch held sales", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Resumes a previously held sale by loading its items and customer data.
+   */
+  const resumeSale = async (sale: any) => {
+    try {
+      setIsLoading(true);
+
+      // 1. Fetch products for this sale
+      const { data: soldProducts, error: productsError } = await supabase
+        .from("sold_products")
+        .select("*")
+        .eq("sales_id", sale.id);
+
+      if (productsError) throw productsError;
+
+      // 2. Fetch customer info from sale_customers
+      const { data: saleCustomer, error: customerError } = await supabase
+        .from("sale_customers")
+        .select("*")
+        .eq("sales_id", sale.id)
+        .maybeSingle();
+
+      if (customerError) console.error("Error fetching sale customer:", customerError);
+
+      // 3. Update state
+      if (saleCustomer) {
+        setCustomer({
+          id: saleCustomer.customer_id,
+          name: saleCustomer.customer_name || "",
+          phone: saleCustomer.customer_phone || "",
+          email: saleCustomer.customer_email || "",
+          dues: 0,
+        });
+      }
+
+      const items: CartItem[] = (soldProducts || []).map(p => ({
+        id: p.barcode ? String(p.barcode) : `temp-${Math.random()}`,
+        name: p.product_name,
+        model: p.model_number || "",
+        color: p.color || "",
+        quantity: p.quantity,
+        price: p.unit_price,
+        discount: p.discount_amount || 0,
+        barcode: p.barcode ? String(p.barcode) : "",
+        cost_price: p.cost_price,
+      }));
+
+      setCartItems(items);
+      setCurrentSaleId(sale.id);
+      setInvoiceNumber(sale.invoice_number);
+
+      toast({ title: "Sale Resumed", description: `Loaded Invoice ${sale.invoice_number}` });
+    } catch (error: any) {
+      console.error("Error resuming sale:", error);
+      toast({ title: "Error", description: "Failed to resume sale", variant: "destructive" });
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const printReceipt = async () => {
-    if (!currentSaleId) {
-      toast({
-        title: "No active sale",
-        description: "Start or complete a sale first.",
-      });
-      return;
+    let saleIdToPrint = currentSaleId;
+
+    if (!saleIdToPrint) {
+      setIsLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("sales")
+          .select("id")
+          .eq("organization_id", organizationId)
+          .eq("status", "completed")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .single();
+
+        if (error) {
+          if (error.code === "PGRST116") {
+            toast({
+              title: "No sales found",
+              description: "There are no completed sales in this shop yet.",
+              variant: "destructive",
+            });
+          } else {
+            throw error;
+          }
+          return;
+        }
+
+        if (data) {
+          saleIdToPrint = data.id;
+        }
+      } catch (err: any) {
+        console.error("Error fetching last sale:", err);
+        toast({
+          title: "Error",
+          description: "Failed to fetch the last receipt.",
+          variant: "destructive",
+        });
+        return;
+      } finally {
+        setIsLoading(false);
+      }
     }
-    await openPrintableReceipt(currentSaleId);
+
+    if (saleIdToPrint) {
+      await openPrintableReceipt(saleIdToPrint);
+    }
   };
 
   // ---- Customer selection / save
@@ -1612,7 +1823,7 @@ export function POSClient() {
             {isLoading && (
               <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
                 <p className="text-sm text-blue-800">
-                  🔍 Looking up product...
+                  ðŸ” Looking up product...
                 </p>
               </div>
             )}
@@ -2122,9 +2333,9 @@ export function POSClient() {
                         paymentForm.method === "cash"
                           ? paymentForm.cashReceived
                           : paymentForm.bkashReceived +
-                            paymentForm.nagadReceived +
-                            paymentForm.rocketReceived +
-                            paymentForm.upayReceived
+                          paymentForm.nagadReceived +
+                          paymentForm.rocketReceived +
+                          paymentForm.upayReceived
                       }
                       onChange={(e) => {
                         const value = Number.parseFloat(e.target.value) || 0;
@@ -2244,8 +2455,8 @@ export function POSClient() {
                 {isLoading
                   ? "Processing..."
                   : !customer
-                  ? "Select Customer to Complete"
-                  : "Complete Sale"}
+                    ? "Select Customer to Complete"
+                    : "Complete Sale"}
               </Button>
               <div className="grid grid-cols-2 gap-2">
                 <Button
@@ -2312,6 +2523,17 @@ export function POSClient() {
                 <span className="text-sm">Scan Product</span>
               </div>
             </Button>
+            <Button
+              variant="outline"
+              className="h-16 bg-transparent border-orange-200 hover:bg-orange-50 col-span-2 md:col-span-1"
+              onClick={fetchHeldSales}
+              disabled={isLoading}
+            >
+              <div className="text-center text-orange-700">
+                <RotateCcw className="h-6 w-6 mx-auto mb-1" />
+                <span className="text-sm">Held Sales</span>
+              </div>
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -2328,6 +2550,46 @@ export function POSClient() {
         onOpenChange={setShowScanner}
         onScanResult={(result) => lookupByBarcode(result)}
       />
+
+      <Dialog open={showHeldSales} onOpenChange={setShowHeldSales}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Held Sales</DialogTitle>
+          </DialogHeader>
+          <div className="mt-4 max-h-[400px] overflow-y-auto">
+            {heldSales.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">No held sales found.</p>
+            ) : (
+              <div className="space-y-2">
+                {heldSales.map((sale) => (
+                  <div
+                    key={sale.id}
+                    className="flex items-center justify-between p-3 border rounded-lg hover:bg-accent cursor-pointer transition-colors"
+                    onClick={() => {
+                      resumeSale(sale);
+                      setShowHeldSales(false);
+                    }}
+                  >
+                    <div>
+                      <div className="font-medium">#{sale.invoice_number}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {sale.sale_customers?.[0]?.customer_name || "Walk-in Customer"} •
+                        {new Date(sale.created_at).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-semibold">৳{sale.total_amount?.toFixed(2)}</div>
+                      <Button variant="ghost" size="sm" className="h-7 text-blue-600 font-medium">
+                        Resume
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

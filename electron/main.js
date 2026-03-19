@@ -107,10 +107,13 @@ async function createWindow() {
     },
   })
 
-  // Open external links in system browser, not in the app
+  // Open external links in system browser, but keep internal windows (like print previews) in the app
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
-    return { action: 'deny' }
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      shell.openExternal(url)
+      return { action: 'deny' }
+    }
+    return { action: 'allow' }
   })
 
   mainWindow.once('ready-to-show', () => {
